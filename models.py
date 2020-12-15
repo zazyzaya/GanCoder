@@ -7,6 +7,7 @@ from torch_geometric.data import Data
 from torch_sparse import SparseTensor
 from torch_cluster import random_walk
 
+
 class DiscriminatorSingleAdj(nn.Module):
     def __init__(self, data, out_dim, hidden=32, num_convs=3, final_nn=False):
         super(DiscriminatorSingleAdj, self).__init__()
@@ -56,7 +57,9 @@ class DiscriminatorSingleAdj(nn.Module):
         # Note that XX^T[n, m] is X_n * X_m^T so this returns a square 
         # matrix of link probabilities 
         # For really big datasets this may be infeasible
-        return torch.sigmoid(torch.mm(out, out.transpose(0,1)))
+        # return torch.sigmoid(torch.mm(out, out.transpose(0,1)))
+        
+        return out
 
     '''
     Generates random walks through the graph using the generated adj mat
@@ -89,31 +92,25 @@ class GeneratorSingleAdj(nn.Module):
         layers = [nn.Linear(latent_dim, hidden), nn.LeakyReLU(0.2)]
 
         for i in range(1, n_layers):
-            layers.append(nn.Linear(hidden*i, hidden*(i+1)))
+            layers.append(nn.Linear(hidden, hidden))
             layers.append(nn.LeakyReLU(0.2))
 
-        layers.append(nn.Linear(hidden*(n_layers), num_nodes ** 2))
+        layers.append(nn.Linear(hidden, num_nodes))
         layers.append(nn.Sigmoid())
 
         self.layers = nn.Sequential(
             *layers
         )
 
-    def forward(self):
-        x = Variable(torch.empty((1, self.latent_dim)).normal_(mean=0, std=1))
+    def forward(self, batch_size=None):
+        if type(batch_size) == type(None):
+            batch_size = self.num_nodes
+
+        x = Variable(torch.empty((batch_size, self.latent_dim)).normal_(mean=0, std=1))
         x = self.layers(x)
         x = torch.round(x)
 
         return x.view((self.num_nodes, self.num_nodes))
-        
-    '''
-    Using the Discriminator's embeddings, calculate the likelihood 
-    of the 1-hop ego group of each node existing (in the future, maybe
-    random walks on the graph could work here too, but I'm not sure
-    how the autograd system would handle that)
-    '''
-    def compare_to_disc(self, adj, x):
-        return (x * adj).prod(1, keepdim=True)
 
 
 '''
@@ -121,7 +118,7 @@ Returns probability that each random walk could have occurred in the given
 graph. Ideally, for true samples this should tend toward 1, and false samples
 should tend toward zero
 '''
-def rw_link_score(rw, x):
+def rw_link_score_sg(rw, x):
     trans_probabilities = []
     for step in range(rw.size()[1] - 1):
         trans_probabilities.append(
@@ -134,6 +131,27 @@ def rw_link_score(rw, x):
     ret = ret.prod(1, keepdim=True)
 
     return ret
+
+'''
+Returns overall prob of node 1 cooccuring with other nodes in walk
+'''
+def rw_link_score_cbow(rw, x):
+    start, rest = rw[:, 0], rw[:, 1:].contiguous()
+
+    h_start = x[start].view(rw.size(0), 1, x.size(1))
+    h_rest  = x[rest.view(-1)].view(rw.size(0), -1, x.size(1))
+
+    out = (h_start * h_rest).sum(dim=-1).view(-1)
+    return out
+
+'''
+If using skip gram, make sure to have discriminator return 
+single step probabilites (XX^T) rather than embeddings
+'''
+def rw_link_score(rw, x, cbow=True):
+    if cbow:
+        return rw_link_score_cbow(rw, x)
+    return rw_link_score_sg(rw, x)
 
 
 # Test to make sure grad is attached to everything, 
