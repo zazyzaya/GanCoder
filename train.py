@@ -1,5 +1,6 @@
 import torch 
 import time
+import copy 
 import numpy as np
 import load_graphs as lg 
 
@@ -27,14 +28,18 @@ def get_score(tp_edges, neg, recon_adj, resize_neg=True):
 
     return auc, ap
 
-def train_ARGAE(data, epochs=200, lr=0.001, K=3):
+'''
+Note: with higher embedding & hidden dimensions (128 and 256 resp.), 
+regular GAE (set K=0) outperforms ARGAE, by like 10% 
+'''
+def train_ARGAE(data, epochs=200, lr=0.001, K=5, SE_VAL=10):
     from ARGAE import ARGAEDiscriminator as Disc 
     from ARGAE import ARGAEGenerator as Gen 
 
     nn = data.x.size(0)
     ne = data.edge_index.size(1)
 
-    G = Gen(data.x.size(1))
+    G = Gen(data.x.size(1), latent_dim=128, hidden_dim=256)
     D = Disc(G.latent_dim)
     
     rnd = torch.randperm(ne)
@@ -53,8 +58,12 @@ def train_ARGAE(data, epochs=200, lr=0.001, K=3):
 
     g_opt = Adam(G.parameters(), lr=lr, betas=(0.5, 0.999))
     d_opt = Adam(D.parameters(), lr=lr, betas=(0.5, 0.999))
+    
+    best = (0, None)
+    stop_early = 0
 
     for e in range(epochs):
+        d_loss = float('nan')
         for _ in range(K):
             # Train disc 
             d_opt.zero_grad()
@@ -104,10 +113,23 @@ def train_ARGAE(data, epochs=200, lr=0.001, K=3):
                 auc, ap
             )
         )
+
+        # Early stopping to prevent over-fitting
+        vscore = (auc+ap).mean()
+        if vscore > best[0]:
+            best = (vscore, copy.deepcopy(G)) 
+            stop_early = 0
+        else:
+            stop_early += 1
+            if stop_early == SE_VAL:
+                print("Early stopping")
+                break
     
     # Final score and cleanup
     del adj_tr
     del neg_val 
+
+    G = best[1]
 
     neg = dense_to_sparse(
         ~(
@@ -126,5 +148,5 @@ def train_ARGAE(data, epochs=200, lr=0.001, K=3):
     print("Final AUC: %0.4f  AP: %0.4f" % (auc, ap))
 
 if __name__ == '__main__':
-    data = lg.load_cora()
+    data = lg.load_citeseer()
     train_ARGAE(data)

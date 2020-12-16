@@ -20,7 +20,7 @@ class ARGAEGenerator(nn.Module):
 
         self.latent_dim = latent_dim
         self.loss = nn.BCEWithLogitsLoss()
-        
+
     def forward(self, x, ei, ew=None):
         x = self.c1(x, ei, edge_weight=ew)
         x = self.relu(x)
@@ -63,6 +63,11 @@ class ARGAEDiscriminator(nn.Module):
         x = Variable(
             torch.empty(data, self.feat_dim).normal_()
         )
+
+        '''
+        dist = torch.distributions.exponential.Exponential(1.0)
+        x = Variable(dist.sample((data, self.feat_dim)))
+        '''
 
         return self.layers(x)
 
