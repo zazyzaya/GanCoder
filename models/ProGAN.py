@@ -3,6 +3,7 @@ import copy
 
 from torch import nn 
 from torch.autograd import Variable
+from .utils import sample_triplets
 
 class ProGANGenerator(nn.Module):
     def __init__(self, output_dim, latent_dim=64, hidden_dim=512):
@@ -81,17 +82,6 @@ class ProGANDiscriminator(nn.Module):
             nn.Sigmoid()
         )
 
-        ''' 
-        I think this is supposed to be the
-        same layer as the embedding layer, otherwise 
-        it's kind of pointless
-        
-        self.similarity = nn.Sequential(
-            nn.Linear(hidden_dim, embed_dim),
-            nn.LeakyReLU(0.2)
-        )
-        '''
-
         self.embedding = nn.Sequential(
             nn.Linear(hidden_dim, embed_dim),
             nn.LeakyReLU(0.2)
@@ -159,40 +149,9 @@ class ProGANDiscriminator(nn.Module):
 
         return r_loss + s_loss + d_loss 
 
-'''
-I'm not sure what the paper is on about with the whole
-Pv = dv^(3/4) distribution thing. I'm just using the uniform
-distro
-
-Assumes self loops are added so torch.multinomial doesn't break
-'''
-def sample_triplets(adj, x, batch=None):
-    if type(batch) == type(None):
-        edges = adj.float()
-        batch = x
-    
-    else:
-        edges = adj[batch].float()
-        batch = x[batch]
-    
-    pos = torch.multinomial(
-        edges, 
-        num_samples=1, 
-        replacement=True
-    ).squeeze(-1)
-
-    # If one node is connected to every other one, I 
-    # think there are bigger problems
-    neg = torch.multinomial(
-        (edges == 0).float(),
-        num_samples=1,
-        replacement=True
-    ).squeeze(-1)
-
-    return batch, x[pos], x[neg]
-
 def train_ProGAN(data, epochs=200, lr=0.001, SE_VAL=float('inf'),
-                embed_dim=100, PCA_dim=128):
+                embed_dim=100, PCA_dim=128, sample=sample_triplets,
+                hidden_dim=512):
     from .utils import get_score, pca
     from torch.optim import Adam 
     from torch_geometric.utils import to_dense_adj, dense_to_sparse
@@ -200,8 +159,8 @@ def train_ProGAN(data, epochs=200, lr=0.001, SE_VAL=float('inf'),
     if PCA_dim:
         data.x = pca(data.x, dim=PCA_dim)
 
-    G = ProGANGenerator(data.x.size(1))
-    D = ProGANDiscriminator(G.output_dim, embed_dim=embed_dim)
+    G = ProGANGenerator(data.x.size(1), hidden_dim=hidden_dim)
+    D = ProGANDiscriminator(G.output_dim, embed_dim=embed_dim, hidden_dim=hidden_dim)
 
     nn = data.x.size(0)
     adj = to_dense_adj(data.edge_index, max_num_nodes=nn)[0]
@@ -229,7 +188,7 @@ def train_ProGAN(data, epochs=200, lr=0.001, SE_VAL=float('inf'),
         real, sim, dis = D(zi, zj, zk)
         f_loss = D.loss(real, sim, dis, is_real=False)
 
-        xi, xj, xk = sample_triplets(adj, data.x)
+        xi, xj, xk = sample(adj, data.x, data.edge_index)
         real, sim, dis = D(xi, xj, xk)
         t_loss = D.loss(real, sim, dis, is_real=True)
 

@@ -84,17 +84,17 @@ class ARGAEDiscriminator(nn.Module):
 Note: with higher embedding & hidden dimensions (128 and 256 resp.), 
 regular GAE (set K=0) outperforms ARGAE, by like 10% 
 '''
-def train_ARGAE(data, epochs=200, lr=0.001, K=5, SE_VAL=10,
+def train_ARGAE(data, epochs=200, lr=0.001, K=5, SE_VAL=25,
                 latent_dim=16, hidden_dim=32):
     from .utils import get_score
     from torch.optim import Adam 
     from torch_geometric.utils import to_dense_adj, dense_to_sparse
 
-    nn = data.x.size(0, latent_dim=latent_dim, hidden_dim=hidden_dim)
+    nn = data.x.size(0)
     ne = data.edge_index.size(1)
 
-    G = ARGAEGenerator(data.x.size(1))
-    D = ARGAEDiscriminator(G.latent_dim)
+    G = ARGAEGenerator(data.x.size(1), latent_dim=latent_dim, hidden_dim=hidden_dim)
+    D = ARGAEDiscriminator(G.latent_dim, hidden_dim=hidden_dim)
     
     rnd = torch.randperm(ne)
     tr, val, te = rnd[:int(ne*0.85)], rnd[int(ne*0.85):int(ne*0.90)], rnd[int(ne*0.9):]
