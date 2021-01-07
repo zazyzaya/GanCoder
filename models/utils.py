@@ -3,26 +3,40 @@ import numpy as np
 
 from torch import nn
 from torch_cluster import random_walk
+from torch_geometric.utils import to_dense_adj, dense_to_sparse
 from sklearn.metrics import roc_auc_score, average_precision_score
 
-def get_score(tp_edges, neg, recon_adj, resize_neg=True):
-    # Select an equal number of random false edges
-    n = tp_edges.size(1)
+def get_score(tp_edges, neg, recon_adj, resize_neg=True, 
+                neg_mult=1):
+    # Select a weighted number of negative edges 
+    ntp = tp_edges.size(1)
+    nf = ntp * neg_mult
     
     if resize_neg:
-        neg = neg[:, torch.randperm(neg.size(1))[:n]]
+        neg = neg[:, torch.randperm(neg.size(1))[:nf]]
 
     pscore = recon_adj[tp_edges[0], tp_edges[1]]
     nscore = recon_adj[neg[0], neg[1]]
     score = torch.cat([pscore, nscore]).numpy()
 
-    labels = np.zeros(n*2, dtype=np.long)
-    labels[:n] = 1
+    labels = np.zeros(ntp + nf, dtype=np.long)
+    labels[:ntp] = 1
 
     ap = average_precision_score(labels, score)
     auc = roc_auc_score(labels, score)
 
     return auc, ap
+
+def get_neg_adj(ei, nn):
+    neg = ~(
+        to_dense_adj(
+            ei,
+            max_num_nodes=nn
+        ).bool()
+    ).long()[0]
+
+    neg = dense_to_sparse(neg)[0]
+    return neg
 
 from sklearn.decomposition import PCA
 def pca(X, dim=256):
@@ -105,15 +119,24 @@ Exp is used to smooth output scores
 (1/x is too steep, the x^(3/4) relationship is well known in edge distro so we 
 choose that)
 '''
-def rw_distance(x, ei, batch=None, walk_len=5, dist_mat=None, exp=0.75):
-    if type(batch) == type(None):
-        batch = torch.tensor(list(range(x.size(0))))
+def rw_distance(ei, batch=None, walk_len=5, dist_mat=None, 
+                exp=0.75, num_nodes=None, window_size=None,
+                num_walks=1):
+    
+    num_nodes = num_nodes if num_nodes else ei.max()
+    if not window_size:
+        window_size = walk_len
+    
+    if type(batch) == type(None):    
+        batch = torch.tensor(list(range(num_nodes)))
     
     if type(dist_mat) == type(None):
-        dist_mat = torch.zeros((x.size(0), x.size(0)))
+        dist_mat = torch.zeros((num_nodes, num_nodes))
+        dist_mat[ei[0], ei[1]] = 1
 
-    rw = random_walk(ei[0], ei[1], batch, walk_len)
-    for i in range(1, rw.size(1)):
+    rw = random_walk(ei[0], ei[1], batch.repeat(num_walks), walk_len)
+
+    for i in range(2, window_size):
         score = 1 / (i ** exp)
 
         for j in range(rw.size(1)-i):
@@ -123,6 +146,24 @@ def rw_distance(x, ei, batch=None, walk_len=5, dist_mat=None, exp=0.75):
             dist_mat[rw[:, j], rw[:, j+i]] = vals
 
     return dist_mat
+
+'''
+Splits edges into 60:20:20 train val test partition
+'''
+def edge_tvt_split(data):
+    ne = data.edge_index.size(1)
+    val = int(ne*0.6)
+    te = int(ne*0.8)
+
+    masks = torch.zeros(3, ne).bool()
+    rnd = torch.randperm(ne)
+    masks[0, rnd[:val]] = True 
+    masks[1, rnd[val:te]] = True
+    masks[2, rnd[te:]] = True 
+
+    data.edge_tr = masks[0]
+    data.edge_va = masks[1]
+    data.edge_te = masks[2]
 
 
 '''

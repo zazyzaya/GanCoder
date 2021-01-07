@@ -43,20 +43,23 @@ class MyGAE(nn.Module):
 '''
 This cant possibly be right...
 
-Cora        AUC: 0.9601  AP: 0.9603
-Citeseer:   AUC: 0.9850  AP: 0.9836
+Cora        AUC: 0.9435  AP: 0.9442
+Citeseer:   AUC: 0.8993  AP: 0.8915 (yeah, see it wasn't right)
 
 Compare to regular GAE on the same data
 
-Cora:       AUC: 0.8761  AP: 0.8743 (0.910 & 0.920 are reported)
-Citeseer:   AUC: 0.9786  AP: 0.9789 (0.895 & 0.899 are reported)
+Cora:       AUC: 0.8990  AP: 0.8838 (0.910 & 0.920 are reported)
+Citeseer:   AUC: 0.9160  AP: 0.9033 (0.895 & 0.899 are reported)
 
-It's possible I'm using different data cleaning which accounts for
-the weird difference between what I'm getting and what's reported,
-but STILL. The differences between the two on the SAME DATA are HUGE
+Using the Planetoid data set (which is pretty standard)
+
+NOTE: on unbalanced data (ie, using 10x the neg samples than pos)
+this performs semi-poorly, but by cranking up the negative sampling
+rate, the AP gets back up to ~0.82 which seems.. okay (still better
+than GAE which cant do that, as it merely makes the adj mat)
 '''
 def train_MyGAE(data, epochs=200, lr=0.001, K=10, SE_VAL=25,
-                embed_dim=16, hidden_dim=32):
+                embed_dim=16, hidden_dim=32, neg_sampling=1):
     from .utils import get_score, rw_distance
     from torch.optim import Adam 
     from torch_geometric.utils import to_dense_adj, dense_to_sparse
@@ -70,9 +73,12 @@ def train_MyGAE(data, epochs=200, lr=0.001, K=10, SE_VAL=25,
     g_opt = Adam(G.parameters(), lr=lr)
 
     # Bootstrapping score mat (it will be updated periodically later, however)
-    scores = None
-    for _ in range(K):
-        scores = rw_distance(data.x, data.edge_index, dist_mat=scores)
+    scores = rw_distance(
+        data.edge_index, 
+        num_nodes=data.x.size(0),
+        window_size=5,
+        walk_len=K
+    )
 
     # Partition data 
     rnd = torch.randperm(ne)
@@ -122,10 +128,7 @@ def train_MyGAE(data, epochs=200, lr=0.001, K=10, SE_VAL=25,
         x = G(data.x, data.edge_index[:, tr])
 
         # Presumably more negatives than positives
-        if num_pos < num_neg:
-            neg_samples = ntr[torch.randperm(ntr.size(0))[:num_pos]]
-        else:
-            neg_samples = ntr 
+        neg_samples = ntr[torch.randperm(ntr.size(0))[:num_pos*neg_sampling]]
 
         pos_loss = G.loss_fn(
             x[p1[ptr]], 

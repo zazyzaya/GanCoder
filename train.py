@@ -1,11 +1,13 @@
 import torch 
 import time
 import numpy as np
-import load_graphs as lg 
 
 from torch.optim import Adam 
 from torch_geometric.data import Data
+from torch_geometric.datasets import Planetoid
 from torch_geometric.utils import to_dense_adj, dense_to_sparse
+
+DATA_ROOT = '/mnt/raid0_24TB/datasets/torch_geo_datasets'
 
 torch.set_num_threads(16)
 
@@ -43,10 +45,18 @@ def run_ProGAN(data, epochs=200):
 def run_MyGAE(data, epochs=200):
     from models.MyGAE import train_MyGAE
     train_MyGAE(
+        data, epochs=epochs, embed_dim=LATENT, hidden_dim=HIDDEN,
+        K=256
+    )
+
+def run_RLGAN(data, epochs=200):
+    from models.RLGAN import train_RLGAN
+    train_RLGAN(
         data, epochs=epochs, embed_dim=LATENT, hidden_dim=HIDDEN
     )
 
 
 if __name__ == '__main__':
-    data = lg.load_cora()
-    run_GAE(data)
+    from models.utils import pca
+    data = Planetoid(DATA_ROOT, 'Cora').data
+    run_RLGAN(data)
