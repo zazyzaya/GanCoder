@@ -8,7 +8,7 @@ The most significant outcome from playing with these various autoencoders that I
 
 The function in question is this:
 
-![equation](https://latex.codecogs.com/gif.latex?%5Cmathcal%7BL%7D_R%20%3D%20%5Cmathbb%7BE%7D_%7Bq%28%5Cmathbf%7BZ%7D%7C%5Cmathbf%7BX%2CA%7D%29%29%7D%5Cbig%5B%5Clog%20p%28%5Cmathbf%7BA%7CZ%7D%29%5Cbig%5D)
+![equation](https://latex.codecogs.com/gif.latex?%5Cbg_white%5Cmathcal%7BL%7D_R%20%3D%20%5Cmathbb%7BE%7D_%7Bq%28%5Cmathbf%7BZ%7D%7C%5Cmathbf%7BX%2CA%7D%29%29%7D%5Cbig%5B%5Clog%20p%28%5Cmathbf%7BA%7CZ%7D%29%5Cbig%5D)
 
 This requires not only reconstructing *the entire adjacency matrix* which fills quite a bit of memory, but then backpropogating the whole thing. It's absurd. We really don't care a lot of the time how close obviously distant nodes are going to be when their link score is tested. If the model is general enough, it'll just know without having to be tested on it every time. 
 
@@ -18,7 +18,7 @@ To avoid this absurdly large time and space requirement, we can instead create t
 
 for true positive edges, and 
 
-![equation](https://latex.codecogs.com/gif.latex?%5Cmathcal%7BL%7D_R%20%3D%20-%5Clog%5Cbigg%281%20-%20%5Csum_%7Bi%3D0%7D%5Ed%20%5Cmathbf%7B%28S%20%5Codot%20D%29_i%7D%20%5Cbigg%29)
+![equation](https://latex.codecogs.com/gif.latex?%5Cbg_white%5Cmathcal%7BL%7D_R%20%3D%20-%5Clog%5Cbigg%281%20-%20%5Csum_%7Bi%3D0%7D%5Ed%20%5Cmathbf%7B%28S%20%5Codot%20D%29_i%7D%20%5Cbigg%29)
 
 for true negative edges. Where *d* represents the number of dimensions. Note that this is just the dot product of each edges embeddings, and PyTorch can evaluate this equation wicked fast. (in code it's just one line: `-torch.log((Z[src] * Z[dst]).sum(dim=1))`)
 
