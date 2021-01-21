@@ -149,10 +149,10 @@ class ProGANDiscriminator(nn.Module):
 
         return r_loss + s_loss + d_loss 
 
-def train_ProGAN(data, epochs=200, lr=0.001, SE_VAL=float('inf'),
-                embed_dim=100, PCA_dim=128, sample=sample_triplets,
-                hidden_dim=512):
-    from .utils import get_score, pca
+def train_ProGAN(data, epochs=200, lr=0.001, SE_VAL=25,
+                embed_dim=100, PCA_dim=None, hidden_dim=512,
+                K=5):
+    from .utils import get_score, pca, edge_tvt_split, get_neg_adj, rw_sample
     from torch.optim import Adam 
     from torch_geometric.utils import to_dense_adj, dense_to_sparse
 
@@ -162,16 +162,11 @@ def train_ProGAN(data, epochs=200, lr=0.001, SE_VAL=float('inf'),
     G = ProGANGenerator(data.x.size(1), hidden_dim=hidden_dim)
     D = ProGANDiscriminator(G.output_dim, embed_dim=embed_dim, hidden_dim=hidden_dim)
 
-    nn = data.x.size(0)
-    adj = to_dense_adj(data.edge_index, max_num_nodes=nn)[0]
-    neg = ~(
-        to_dense_adj(
-            data.edge_index,
-            max_num_nodes = nn
-        ).bool()
-    ).long()[0]
+    tr, va, te = edge_tvt_split(data)
+    tv = torch.logical_or(tr, va)
 
-    neg = dense_to_sparse(neg)[0]
+    neg_tr = get_neg_adj(data.edge_index[:, tr], data.num_nodes)
+    neg_va = get_neg_adj(data.edge_index[:, tv], data.num_nodes)
 
     g_opt = Adam(G.parameters(), lr=lr, betas=(0.5, 0.999))
     d_opt = Adam(D.parameters(), lr=lr, betas=(0.5, 0.999))
@@ -184,12 +179,15 @@ def train_ProGAN(data, epochs=200, lr=0.001, SE_VAL=float('inf'),
         
         # Train disc 
         d_opt.zero_grad()
-        zi, zj, zk = G(nn)
+        zi, zj, zk = G(data.num_nodes)
         real, sim, dis = D(zi, zj, zk)
         f_loss = D.loss(real, sim, dis, is_real=False)
 
-        xi, xj, xk = sample(adj, data.x, data.edge_index)
-        real, sim, dis = D(xi, xj, xk)
+        # Get actual positive and negative samples
+        xp = rw_sample(data.edge_index[:, tr], data.num_nodes).squeeze()
+        xn = rw_sample(neg_tr, data.num_nodes).squeeze()
+
+        real, sim, dis = D(data.x, data.x[xp], data.x[xn])
         t_loss = D.loss(real, sim, dis, is_real=True)
 
         f_loss.backward()
@@ -200,24 +198,26 @@ def train_ProGAN(data, epochs=200, lr=0.001, SE_VAL=float('inf'),
         d_loss /= 2
 
         # Train generator
-        g_opt.zero_grad()
-        zi, zj, zk = G(nn)
-        real, sim, dis = D(zi, zj, zk)
-        g_loss = D.loss(real, sim, dis, is_real=True)
+        for _ in range(K):
+            g_opt.zero_grad()
+            zi, zj, zk = G(data.num_nodes)
+            real, sim, dis = D(zi, zj, zk)
+            g_loss = D.loss(real, sim, dis, is_real=True)
 
-        g_loss.backward()
-        g_opt.step()
+            g_loss.backward()
+            g_opt.step()
 
-        g_loss = g_loss.item()
+            g_loss = g_loss.item()
 
         # Check AUC  
-        recon = D.embed(data.x).detach()
-        recon = torch.mm(recon, recon.T)
-        auc, ap = get_score(
-            data.edge_index, 
-            neg, 
-            recon
-        )
+        with torch.no_grad():
+            recon = D.embed(data.x)
+            recon = torch.mm(recon, recon.T)
+            auc, ap = get_score(
+                data.edge_index[:, va], 
+                neg_va, 
+                recon
+            )
 
         print("[%d] D Loss: %0.3f  G Loss: %0.4f  |  AUC: %0.3f AP: %0.3f" %
             (
@@ -237,4 +237,18 @@ def train_ProGAN(data, epochs=200, lr=0.001, SE_VAL=float('inf'),
                 print("Early stopping")
                 break
 
-    return G, D
+    del neg_va, neg_tr
+    neg = get_neg_adj(data.edge_index, data.num_nodes)
+    D = best[1]
+
+    with torch.no_grad():
+        recon = D.embed(data.x)
+        recon = torch.mm(recon, recon.T)
+        auc, ap = get_score(
+            data.edge_index[:, te],
+            neg,
+            recon
+        )
+
+    print("Final scores: AUC %0.4f  AP %0.4f" % (auc, ap))
+    return auc, ap 

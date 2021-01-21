@@ -6,20 +6,20 @@ from torch_cluster import random_walk
 from torch_geometric.utils import to_dense_adj, dense_to_sparse
 from sklearn.metrics import roc_auc_score, average_precision_score
 
-def get_score(tp_edges, neg, recon_adj, resize_neg=True, 
-                neg_mult=1):
-    # Select a weighted number of negative edges 
-    ntp = tp_edges.size(1)
-    nf = ntp * neg_mult
-    
-    if resize_neg:
-        neg = neg[:, torch.randperm(neg.size(1))[:nf]]
+def decode(z, ei):
+    dot = (z[ei[0]] * z[ei[1]]).sum(dim=1)
+    return torch.sigmoid(dot)
 
-    pscore = recon_adj[tp_edges[0], tp_edges[1]]
-    nscore = recon_adj[neg[0], neg[1]]
+def get_score(tp, neg, z):
+    # Select a weighted number of negative edges 
+    ntp = tp.size(1)
+    ntn = neg.size(1)
+    
+    pscore = decode(z, tp)
+    nscore = decode(z, neg)
     score = torch.cat([pscore, nscore]).numpy()
 
-    labels = np.zeros(ntp + nf, dtype=np.long)
+    labels = np.zeros(ntp + ntn, dtype=np.long)
     labels[:ntp] = 1
 
     ap = average_precision_score(labels, score)
@@ -91,27 +91,9 @@ def __reshape_batch(x):
 
     return origin.squeeze(-1), walks.squeeze(-1)
 
-WALK_LEN = 4
-def sample_triplets_from_rw(adj, x, ei, batch=None):
-    global WALK_LEN
-
-    if type(batch) == type(None):
-        edges = adj.float()
-        batch = torch.tensor(list(range(x.size(0))))
-    else:
-        edges = adj[batch].float()
-
-    pos = random_walk(ei[0], ei[1], batch, WALK_LEN)
-    neg = torch.multinomial(
-        (edges == 0).float(),
-        num_samples=WALK_LEN,
-        replacement=True
-    ).squeeze(-1)
-    # Retains the order, so [[a,b],[c,d]] becomes [[a,b,c,d]].T
-    neg = neg.reshape((neg.size(1)*neg.size(0), 1)).squeeze(-1)
-
-    origin, walks = __reshape_batch(pos)
-    return x[origin], x[walks], x[neg]
+def rw_sample(ei, num_nodes, wl=1):
+    rw = random_walk(ei[0], ei[1], torch.arange(num_nodes), wl)
+    return rw[:, 1:]
     
 '''
 Iteratively build out min distance matrix
@@ -148,12 +130,13 @@ def rw_distance(ei, batch=None, walk_len=5, dist_mat=None,
     return dist_mat
 
 '''
-Splits edges into 60:20:20 train val test partition
+Splits edges into 85:5:10 train val test partition
+(Following route of ARGAE paper)
 '''
 def edge_tvt_split(data):
     ne = data.edge_index.size(1)
-    val = int(ne*0.6)
-    te = int(ne*0.8)
+    val = int(ne*0.85)
+    te = int(ne*0.90)
 
     masks = torch.zeros(3, ne).bool()
     rnd = torch.randperm(ne)
@@ -161,10 +144,54 @@ def edge_tvt_split(data):
     masks[1, rnd[val:te]] = True
     masks[2, rnd[te:]] = True 
 
-    data.edge_tr = masks[0]
-    data.edge_va = masks[1]
-    data.edge_te = masks[2]
+    return masks[0], masks[1], masks[2]
 
+
+'''
+Uses Kipf-Welling pull #25 to quickly find negative edges
+(For some reason, this works a touch better than the builtin 
+torch geo method)
+'''
+def fast_negative_sampling(edge_list, batch_size, oversample=1.25):
+    num_nodes = edge_list.max().item() + 1
+    
+    # For faster membership checking
+    el_hash = lambda x : x[0,:] + x[1,:]*num_nodes
+
+    el1d = el_hash(edge_list).numpy()
+    neg = np.array([[],[]])
+
+    while(neg.shape[1] < batch_size):
+        maybe_neg = np.random.randint(0,num_nodes, (2, int(batch_size*oversample)))
+        neg_hash = el_hash(maybe_neg)
+        
+        neg = np.concatenate(
+            [neg, maybe_neg[:, ~np.in1d(neg_hash, el1d)]],
+            axis=1
+        )
+
+    # May have gotten some extras
+    neg = neg[:, :batch_size]
+    return torch.tensor(neg).long()
+
+'''
+Given a list of src nodes, generate dst nodes that don't exist
+'''
+def in_order_negative_sampling(edge_list, src):
+    # For faster membership checking
+    num_nodes = edge_list.max().item()
+    el_hash = lambda x : x[0,:] + x[1,:]*num_nodes
+    el1d = el_hash(edge_list).numpy()
+
+    src = src.numpy()
+    dst = np.full((src.shape[0],), -1, dtype=np.long)
+    while (dst.min() == -1):
+        maybe_neg = np.random.randint(0, num_nodes+1, dst.shape)
+        check = src + maybe_neg*num_nodes
+        mask = (~np.in1d(check, el1d)) 
+        dst[mask] = maybe_neg[mask]
+
+    return torch.tensor(dst).long()
 
 '''
     Impliments Minibatch Discrimination to avoid same-looking output
