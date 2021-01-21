@@ -20,7 +20,7 @@ for true positive edges, and
 
 ![equation](https://latex.codecogs.com/gif.latex?%5Cbg_white%5Cmathcal%7BL%7D_R%20%3D%20-%5Clog%5Cbigg%281%20-%20%5Csum_%7Bi%3D0%7D%5Ed%20%5Cmathbf%7B%28S%20%5Codot%20D%29_i%7D%20%5Cbigg%29)
 
-for true negative edges. Where *d* represents the number of dimensions. Note that this is just the dot product of each edges embeddings, and PyTorch can evaluate this equation wicked fast. (in code it's just one line: `-torch.log((Z[src] * Z[dst]).sum(dim=1))`)
+for true negative edges. Where *d* represents the number of dimensions, and the sum is row-wise happening on each column. Note that this is just the dot product of each edges embeddings, and PyTorch can evaluate this equation wicked fast. (in code it's just one line: `-torch.log((Z[src] * Z[dst]).sum(dim=1))`)
 
 Doing this boosts the GAE's AUC from a measly ~0.92 (what's reported in the paper) to a spicy ~0.97 (what the GAE in this repo can achieve with the same settings).[<sup>1</sup>](#fn1)
 
