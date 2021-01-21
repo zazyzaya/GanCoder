@@ -14,7 +14,7 @@ This requires not only reconstructing *the entire adjacency matrix* which fills 
 
 To avoid this absurdly large time and space requirement, we can instead create two edge lists, 2x|E| tensors of source to destination tuples of true positives (e.g. edges that we know exist in the training set) and an equally sized list of true negatives (randomly selected non-edges from the training set). This is much, much faster. Now, if we have matrix **Z** where each row denotes a node's encoding, we index it to get stacks of source and destination encodings, **S** and **D**. The new loss function is now 
 
-![equation](https://latex.codecogs.com/gif.latex?%5Cmathcal%7BL%7D_R%20%3D%20-%5Clog%5Cbigg%28%20%5Csum_%7Bi%3D0%7D%5Ed%20%5Cmathbf%7B%28S%20%5Codot%20D%29_i%7D%20%5Cbigg%29)
+![equation](https://latex.codecogs.com/gif.latex?%5Cbg_white%5Cmathcal%7BL%7D_R%20%3D%20-%5Clog%5Cbigg%28%20%5Csum_%7Bi%3D0%7D%5Ed%20%5Cmathbf%7B%28S%20%5Codot%20D%29_i%7D%20%5Cbigg%29)
 
 for true positive edges, and 
 
